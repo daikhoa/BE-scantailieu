@@ -56,7 +56,9 @@ class SupabaseStorageTests(unittest.TestCase):
         ):
             url = SupabaseStorage(self.settings).signed_url("a/b/document.pdf", "Tài liệu.pdf")
         self.assertIn("download=T%C3%A0i+li%E1%BB%87u.pdf", url)
-        self.assertEqual(json.loads(self.requests[0].content), {"expiresIn": 60})
+        self.assertEqual(
+            json.loads(self.requests[0].content), {"expiresIn": 60, "download": "Tài liệu.pdf"}
+        )
         self.assertNotIn(self.settings.supabase_key, url)
 
     def test_rejects_public_bucket_and_unexpected_signed_url(self):
@@ -72,8 +74,13 @@ class SupabaseStorageTests(unittest.TestCase):
                     operation(SupabaseStorage(self.settings))
 
     def test_storage_failure_returns_safe_error_without_provider_payload(self):
-        with self.transport(lambda request: httpx.Response(503, text=self.settings.supabase_key)):
+        with (
+            self.transport(lambda request: httpx.Response(503, text=self.settings.supabase_key)),
+            self.assertLogs("app.object_storage", level="ERROR") as logs,
+        ):
             with self.assertRaises(HTTPException) as raised:
                 SupabaseStorage(self.settings).signed_url("a/b/x")
         self.assertEqual(raised.exception.status_code, 503)
         self.assertNotIn(self.settings.supabase_key, str(raised.exception))
+        self.assertIn("HTTP 503", logs.output[0])
+        self.assertNotIn(self.settings.supabase_key, " ".join(logs.output))

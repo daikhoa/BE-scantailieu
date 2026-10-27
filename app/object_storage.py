@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -6,6 +7,8 @@ import httpx
 from fastapi import HTTPException
 
 from .config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class SupabaseStorage:
@@ -32,6 +35,11 @@ class SupabaseStorage:
     @staticmethod
     def _check(response: httpx.Response) -> None:
         if not response.is_success:
+            logger.error(
+                "Supabase Storage returned HTTP %d for %s",
+                response.status_code,
+                response.request.method,
+            )
             if response.status_code == 413:
                 raise HTTPException(413, "Tệp vượt giới hạn dung lượng của kho lưu trữ.")
             raise HTTPException(503, "Kho tài liệu chưa sẵn sàng hoặc đã đầy. Vui lòng thử lại.")
@@ -82,7 +90,10 @@ class SupabaseStorage:
 
     def signed_url(self, key: str, download_name: str | None = None) -> str:
         object_path = quote(self.settings.storage_bucket + "/" + key, safe="/")
-        response = self._request("POST", "object/sign/" + object_path, json={"expiresIn": 60})
+        options = {"expiresIn": 60}
+        if download_name:
+            options["download"] = download_name
+        response = self._request("POST", "object/sign/" + object_path, json=options)
         self._check(response)
         try:
             signed = response.json()["signedURL"]
