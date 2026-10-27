@@ -13,7 +13,7 @@ RUN npm install --global npm@10.9.8 && npm ci && npm run build
 
 FROM python:3.12-slim-bookworm
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    DOCSCAN_FRONTEND_DIR=/app/frontend DOCSCAN_DATA_DIR=/tmp/docscan
+    DOCSCAN_FRONTEND_DIR=/app/frontend DOCSCAN_DATA_DIR=/tmp/docscan PORT=10000
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
@@ -22,4 +22,6 @@ COPY app ./app
 COPY --from=frontend /build/frontend/dist ./frontend
 USER docscan
 EXPOSE 10000
+HEALTHCHECK --interval=5s --timeout=5s --start-period=10s --retries=6 \
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.getenv('PORT','10000')+'/api/v1/health',timeout=3).close()"
 CMD ["python", "-m", "app.serve"]

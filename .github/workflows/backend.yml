@@ -45,8 +45,15 @@ jobs:
       - run: docker build -t docscan-ci .
       - run: docker run --detach --name docscan-ci -e PORT=10000 -p 127.0.0.1:10000:10000 docscan-ci
       - run: |
-          curl --retry 12 --retry-connrefused --retry-delay 1 --fail http://127.0.0.1:10000/api/v1/health
+          for attempt in $(seq 1 60); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' docscan-ci)
+            if [ "$state" = healthy ]; then break; fi
+            if [ "$state" = unhealthy ]; then docker logs docscan-ci; exit 1; fi
+            sleep 1
+          done
+          test "$state" = healthy
+          curl --fail http://127.0.0.1:10000/api/v1/health
           curl --fail http://127.0.0.1:10000/ > /dev/null
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:10000/api/v1/documents)" = 401
       - if: always()
-        run: docker logs docscan-ci 2>/dev/null || true
+        run: docker logs docscan-ci || true
