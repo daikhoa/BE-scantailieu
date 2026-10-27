@@ -2,6 +2,10 @@
 
 FastAPI API cho web scan tài liệu và app mobile trong tương lai. Bản hiện tại đăng ký email/mật khẩu dùng ngay; xác minh email và quên mật khẩu chưa triển khai.
 
+## Render Free và Supabase Free
+
+Xem [hướng dẫn triển khai](docs/render-supabase.md). Backend hỗ trợ PostgreSQL và bucket Supabase riêng tư; bản local vẫn dùng SQLite. Docker build frontend từ commit đã ghim trong repo FE để web và API dùng cùng origin, giữ cookie HttpOnly hoạt động trên điện thoại. Không cần triển khai DLL Windows lên backend.
+
 ## Chạy trên máy này
 
 Mở PowerShell tại `C:\Users\Khoa\duanthuctap\backendcamscanner`:
@@ -81,12 +85,12 @@ Khi tạo mới, client có thể gửi `Idempotency-Key` (16–80 ký tự ch�
 ## Lưu trữ, giới hạn và vận hành
 
 - SQLite tại `data/docscan.sqlite3`; tệp tại `data/documents/<id>/<storage-id>/`, không public thư mục này. Sao lưu cả DB và thư mục tài liệu khi backend dừng để giữ một snapshot nhất quán.
-- Mỗi tài liệu 1–50 trang; 25 MiB mỗi ảnh, 100 MiB PDF, 200 MiB tổng request; tối đa 1.000 tài liệu và 2 GiB dữ liệu hiện hành mỗi tài khoản. Ảnh nguồn tối đa 80 MP, ảnh rendered tối đa 16 MP. Có tối đa hai thao tác nhận/lưu upload đồng thời mỗi tiến trình.
+- Mỗi tài liệu 1–50 trang; 25 MiB mỗi ảnh, 50 MB PDF, 200 MiB tổng request; tối đa 1.000 tài liệu và 2 GiB dữ liệu hiện hành mỗi tài khoản. Tổng dung lượng cloud còn chịu quota của Supabase Free. Ảnh nguồn tối đa 80 MP, ảnh rendered tối đa 16 MP. Có tối đa hai thao tác nhận/lưu upload đồng thời mỗi tiến trình.
 - JPEG/PNG/WebP/AVIF được kiểm tra bằng Pillow. HEIC/HEIF gốc được giữ như nguồn riêng tư, kiểm tra chữ ký container và giới hạn metadata; backend không giải mã định dạng này. Khi mở sửa, SDK trên client kiểm tra và giải mã lại. Thumbnail chỉ sinh từ JPEG/PNG rendered đã kiểm tra.
 - Ghi phiên bản mới vào thư mục riêng, cập nhật con trỏ DB theo revision trong giao dịch rồi mới dọn bản cũ. Lỗi trước commit giữ nguyên bản hiện hành; tải đang mở trên Windows có thể khiến bản cũ chưa xoá được. Crash có thể để lại thư mục upload dở.
 - Khi backend đã dừng, chạy `.\.venv\Scripts\python.exe -m app.cleanup` để dọn các bản không được DB tham chiếu và đã cũ hơn một giờ. Lệnh giữ nguyên dữ liệu hiện hành, bỏ qua symlink và kiểm tra đường dẫn đích nằm trong thư mục tài liệu.
 - Mật khẩu dùng scrypt với salt ngẫu nhiên; token chỉ lưu bản băm. Không đưa dữ liệu runtime hoặc bí mật vào Git. `.env.example` chỉ mô tả biến môi trường, không tự động được nạp.
-- Khi triển khai sau này: HTTPS, cookie Secure, origin cụ thể, reverse proxy có giới hạn kết nối/thời gian request và cấu hình trusted proxy, sao lưu/giám sát dung lượng. SQLite phù hợp giai đoạn local; không giả định thư mục tạm của hosting là lưu trữ bền vững.
+- Khi triển khai: HTTPS, cookie Secure, origin cụ thể, reverse proxy có giới hạn kết nối/thời gian request và cấu hình trusted proxy, sao lưu/giám sát dung lượng. Cấu hình production yêu cầu PostgreSQL và Supabase Storage riêng tư; SQLite chỉ dùng local.
 
 ## Kiểm thử
 

@@ -4,11 +4,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 
 from . import auth
 from .config import Settings
-from .database import initialize
+from .database import DATABASE_ERRORS, connect, initialize
 from .documents.routes import router as documents_router
+from .object_storage import SupabaseStorage
 
 
 class RequestLimitMiddleware:
@@ -35,6 +37,8 @@ class RequestLimitMiddleware:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     initialize(settings)
+    if settings.remote_storage:
+        SupabaseStorage(settings).ensure_private_bucket()
     application = FastAPI(title="Docscan API", version="1.0.0")
     application.state.settings = settings
     application.state.upload_slots = asyncio.Semaphore(2)
@@ -50,8 +54,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.middleware("http")
     async def private_responses(request: Request, call_next):
         response = await call_next(request)
-        response.headers["Cache-Control"] = "no-store"
+        immutable = (
+            settings.frontend_dir
+            and request.url.path.startswith(("/assets/", "/docscan-sdk/", "/docscan-wasm/"))
+            and response.status_code == 200
+        )
+        response.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable" if immutable else "no-store"
+        )
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @application.exception_handler(RequestValidationError)
@@ -67,9 +79,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(auth.router)
     application.include_router(documents_router)
 
+    async def database_unavailable(request, error):
+        return JSONResponse(
+            {"detail": "Không kết nối được cơ sở dữ liệu. Vui lòng thử lại."}, status_code=503
+        )
+
+    for error_type in DATABASE_ERRORS:
+        application.add_exception_handler(error_type, database_unavailable)
+
     @application.get("/api/v1/health", tags=["Health"])
     def health():
+        with connect(settings) as db:
+            db.execute("SELECT 1")
         return {"status": "ok", "api_version": 1}
+
+    if settings.frontend_dir:
+        application.mount("/", StaticFiles(directory=settings.frontend_dir, html=True), name="web")
 
     return application
 

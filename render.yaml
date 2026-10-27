@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: docscan-test
+    runtime: docker
+    plan: free
+    region: singapore
+    repo: https://github.com/daikhoa/BE-scantailieu
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DOCSCAN_ENV
+        value: production
+      - key: DOCSCAN_SECURE_COOKIE
+        value: "true"
+      - key: SUPABASE_STORAGE_BUCKET
+        value: docscan-private
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_PASSWORD
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false

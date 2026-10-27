@@ -3,12 +3,13 @@ import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import current_user
 from ..database import connect
+from ..object_storage import SupabaseStorage
 from . import storage
 from .models import Manifest
 
@@ -24,8 +25,8 @@ def list_documents(
 ):
     with connect(request.app.state.settings) as db:
         total = db.execute(
-            "SELECT count(*) FROM documents WHERE user_id = ?", (user["id"],)
-        ).fetchone()[0]
+            "SELECT count(*) AS total FROM documents WHERE user_id = ?", (user["id"],)
+        ).fetchone()["total"]
         rows = db.execute(
             "SELECT * FROM documents WHERE user_id = ? ORDER BY updated_at DESC, id LIMIT ? OFFSET ?",
             (user["id"], limit, offset),
@@ -153,6 +154,12 @@ def file_response(settings, row, filename: str, download: bool):
                 "image/heif": "heif",
             }[mime]
         )
+    if settings.remote_storage:
+        url = SupabaseStorage(settings).signed_url(
+            f"{row['id']}/{row['storage_id']}/{filename}",
+            suggested if download or mime in ("image/heic", "image/heif") else None,
+        )
+        return RedirectResponse(url, status_code=307, headers={"Referrer-Policy": "no-referrer"})
     if not (directory / filename).is_file():
         raise HTTPException(503, "Không thể mở tệp tài liệu. Vui lòng thử lại.")
     return FileResponse(

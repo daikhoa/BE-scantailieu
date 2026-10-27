@@ -13,8 +13,10 @@ from pypdf.errors import PdfReadError
 from pypdf.generic import ArrayObject
 from starlette.datastructures import FormData, UploadFile
 
+from .. import storage_gc
 from ..config import Settings
-from ..database import connect
+from ..database import DATABASE_ERRORS, connect, write_lock
+from ..object_storage import SupabaseStorage
 from .models import ImageInfo, Manifest
 
 logger = logging.getLogger(__name__)
@@ -175,8 +177,29 @@ def save_document(
                     "rb"
                 ) as source:
                     fingerprint.update(hashlib.file_digest(source, "sha256").digest())
+        if settings.remote_storage:
+            with connect(settings) as pending_db:
+                storage_gc.remember(
+                    pending_db,
+                    identifier,
+                    storage_id,
+                    sorted(path.name for path in directory.iterdir()),
+                )
+            remote = SupabaseStorage(settings)
+            for path in directory.iterdir():
+                if path.name == "document.pdf":
+                    mime = "application/pdf"
+                elif path.name == "manifest.json":
+                    mime = "application/json"
+                elif path.name.startswith("thumbnail_"):
+                    mime = "image/jpeg"
+                else:
+                    kind, index = path.name.split("_")
+                    page = manifest.pages[int(index)]
+                    mime = (page.original if kind == "original" else page.rendered).mime
+                remote.upload(path, f"{identifier}/{storage_id}/{path.name}", mime)
         with connect(settings) as db:
-            db.execute("BEGIN IMMEDIATE")
+            write_lock(db, "documents:" + user_id)
             if create_key:
                 receipt = db.execute(
                     "SELECT * FROM create_receipts WHERE user_id = ? AND request_key = ?",
@@ -198,26 +221,27 @@ def save_document(
                         )
                     return summary(previous)
             usage = db.execute(
-                "SELECT count(*), coalesce(sum(byte_size), 0) FROM documents WHERE user_id = ?",
+                "SELECT count(*) AS document_count, coalesce(sum(byte_size), 0) AS total_bytes FROM documents WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
-            if usage[1] - (
+            if usage["total_bytes"] - (
                 old["byte_size"] if old else 0
             ) + byte_size > settings.max_user_bytes or (
-                not old and usage[0] >= settings.max_documents
+                not old and usage["document_count"] >= settings.max_documents
             ):
                 raise HTTPException(
                     413, "Kho tài liệu đã đạt giới hạn dung lượng hoặc số tài liệu."
                 )
             if old:
                 changed = db.execute(
-                    "UPDATE documents SET name = ?, revision = revision + 1, storage_id = ?, page_count = ?, byte_size = ?, updated_at = ? WHERE id = ? AND user_id = ? AND revision = ?",
+                    "UPDATE documents SET name = ?, revision = revision + 1, storage_id = ?, page_count = ?, byte_size = ?, updated_at = ?, manifest = ? WHERE id = ? AND user_id = ? AND revision = ?",
                     (
                         manifest.name,
                         storage_id,
                         len(manifest.pages),
                         byte_size,
                         now,
+                        encoded,
                         identifier,
                         user_id,
                         manifest.revision,
@@ -227,7 +251,7 @@ def save_document(
                     raise HTTPException(409, "Tài liệu đã thay đổi. Hãy mở lại trước khi lưu.")
             else:
                 db.execute(
-                    "INSERT INTO documents VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+                    "INSERT INTO documents (id,user_id,name,revision,storage_id,page_count,byte_size,created_at,updated_at,manifest) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
                     (
                         identifier,
                         user_id,
@@ -237,6 +261,7 @@ def save_document(
                         byte_size,
                         now,
                         now,
+                        encoded,
                     ),
                 )
                 if create_key:
@@ -244,16 +269,34 @@ def save_document(
                         "INSERT INTO create_receipts VALUES (?, ?, ?, ?)",
                         (user_id, create_key, fingerprint.hexdigest(), identifier),
                     )
+            if settings.remote_storage:
+                db.execute(
+                    "DELETE FROM storage_garbage WHERE document_id = ? AND storage_id = ?",
+                    (identifier, storage_id),
+                )
+                if old:
+                    old_files = ["manifest.json", "document.pdf"] + [
+                        f"{kind}_{index}"
+                        for index in range(old["page_count"])
+                        for kind in ("original", "rendered", "thumbnail")
+                    ]
+                    storage_gc.remember(db, identifier, old["storage_id"], old_files)
         committed = True
     except OSError:
         raise HTTPException(
             503, "Không thể ghi tài liệu. Bản đã lưu trước đó vẫn được giữ nguyên."
         ) from None
     finally:
-        if not committed and directory.exists():
+        if (settings.remote_storage or not committed) and directory.exists():
             remove_version(directory)
     if old:
-        remove_version(directory.parent / old["storage_id"])
+        if settings.remote_storage:
+            try:
+                storage_gc.collect_version(settings, identifier, old["storage_id"])
+            except (HTTPException, *DATABASE_ERRORS):
+                logger.warning("Obsolete cloud objects retained for a later storage cleanup.")
+        else:
+            remove_version(directory.parent / old["storage_id"])
     return summary(document_row(settings, user_id, identifier))
 
 
@@ -261,7 +304,7 @@ def detail(settings: Settings, row) -> dict:
     base = f"/api/v1/documents/{row['id']}/assets/{row['storage_id']}"
     try:
         path = settings.data_dir / "documents" / row["id"] / row["storage_id"] / "manifest.json"
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest = json.loads(row["manifest"] or path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise HTTPException(503, "Không thể mở dữ liệu tài liệu. Vui lòng thử lại.") from None
     return {

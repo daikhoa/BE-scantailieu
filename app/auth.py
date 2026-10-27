@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 import secrets
-import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from .database import connect
+from .database import INTEGRITY_ERRORS, connect, write_lock
 
 COOKIE = "docscan_session"
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
@@ -52,7 +51,7 @@ def rate_limit(request: Request, action: str, maximum: int) -> None:
     ip = request.client.host if request.client else "unknown"
     key = f"{action}:{ip}"
     with connect(request.app.state.settings) as db:
-        db.execute("BEGIN IMMEDIATE")
+        write_lock(db, key)
         db.execute("DELETE FROM rate_limits WHERE reset_at <= ?", (now,))
         row = db.execute("SELECT attempts FROM rate_limits WHERE key = ?", (key,)).fetchone()
         if row and row["attempts"] >= maximum:
@@ -62,7 +61,7 @@ def rate_limit(request: Request, action: str, maximum: int) -> None:
                 headers={"Retry-After": "300"},
             )
         db.execute(
-            "INSERT INTO rate_limits VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET attempts = attempts + 1",
+            "INSERT INTO rate_limits VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET attempts = rate_limits.attempts + 1",
             (key, now + 300),
         )
 
@@ -100,7 +99,7 @@ def register(credentials: Credentials, request: Request):
                 "INSERT INTO users VALUES (?, ?, ?, ?)",
                 (user["id"], user["email"], password_hash, datetime.now(timezone.utc).isoformat()),
             )
-    except sqlite3.IntegrityError:
+    except INTEGRITY_ERRORS:
         raise HTTPException(409, "Email đã được đăng ký. Vui lòng đăng nhập.") from None
     return user
 

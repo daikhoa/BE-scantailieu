@@ -1,0 +1,16 @@
+.git
+.venv
+.codegraph
+.ruff_cache
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+data
+.env
+.env.*
+*.key
+*.pem
+*.log
+.tmp-*
+tests

@@ -9,10 +9,13 @@ import time
 from .config import Settings
 from .database import connect, initialize
 from .documents.storage import remove_version
+from .storage_gc import collect_stale
 
 
 def cleanup(settings: Settings, minimum_age_seconds: int = 3600) -> int:
     initialize(settings)
+    if settings.remote_storage:
+        return collect_stale(settings, minimum_age_seconds)
     root = (settings.data_dir / "documents").resolve()
     if not root.is_dir():
         return 0

@@ -1,7 +1,10 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import psycopg
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -11,8 +14,19 @@ from app.main import create_app
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        database_url = os.getenv("DOCSCAN_TEST_DATABASE_URL", "")
+        if database_url:
+            target = urlsplit(database_url)
+            if target.hostname not in ("127.0.0.1", "localhost") or target.path != "/docscan_ci":
+                raise ValueError(
+                    "Integration tests require the disposable localhost docscan_ci database"
+                )
+            with psycopg.connect(database_url) as db:
+                db.execute("DROP SCHEMA IF EXISTS docscan CASCADE")
         self.settings = Settings(
-            data_dir=Path(self.temp.name), allowed_origins=("http://testserver",)
+            data_dir=Path(self.temp.name),
+            allowed_origins=("http://testserver",),
+            database_url=database_url,
         )
         self.client = TestClient(create_app(self.settings))
         self.headers = {"Origin": "http://testserver", "X-Requested-With": "docscan"}
