@@ -1,6 +1,8 @@
+import mimetypes
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -16,6 +18,9 @@ class WebHostingTests(unittest.TestCase):
             (web / "assets").mkdir(parents=True)
             (web / "index.html").write_text("<html>Docscan</html>", encoding="utf-8")
             (web / "assets" / "index-abc123.js").write_text("console.info('web')", encoding="utf-8")
+            (web / "assets" / "runtime.mjs").write_text(
+                "export const version = 1", encoding="utf-8"
+            )
             data = root / "private-data"
             settings = Settings(data_dir=data, frontend_dir=web)
             with TestClient(create_app(settings)) as client:
@@ -28,3 +33,8 @@ class WebHostingTests(unittest.TestCase):
                 asset = client.get("/assets/index-abc123.js")
                 self.assertIn("immutable", asset.headers["cache-control"])
                 self.assertEqual(client.get("/").headers["cache-control"], "no-store")
+                mimetypes.init()
+                with patch.dict(mimetypes.types_map, {".mjs": "text/plain"}):
+                    module = client.get("/assets/runtime.mjs")
+                self.assertEqual(module.headers["content-type"], "text/javascript; charset=utf-8")
+                self.assertEqual(module.headers["x-content-type-options"], "nosniff")

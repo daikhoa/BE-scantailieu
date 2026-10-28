@@ -63,6 +63,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "public, max-age=31536000, immutable" if immutable else "no-store"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
+        # Windows MIME registry can label ES modules as text/plain; workers require JavaScript.
+        if immutable and request.url.path.endswith(".mjs"):
+            response.headers["Content-Type"] = "text/javascript; charset=utf-8"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
