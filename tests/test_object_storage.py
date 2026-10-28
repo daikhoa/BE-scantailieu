@@ -45,6 +45,21 @@ class SupabaseStorageTests(unittest.TestCase):
         self.assertNotIn("authorization", request.headers)
         self.assertEqual(request.headers["x-upsert"], "false")
 
+    def test_batch_upload_reuses_one_client_and_preserves_every_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = []
+            for index in range(7):
+                path = Path(directory) / str(index)
+                path.write_bytes(str(index).encode())
+                files.append((path, "a/b/" + str(index), "image/jpeg"))
+            with self.transport(lambda request: httpx.Response(200, json={})) as factory:
+                SupabaseStorage(self.settings).upload_many(files)
+                self.assertEqual(factory.call_count, 1)
+        self.assertEqual(len(self.requests), 7)
+        self.assertEqual(
+            {request.content for request in self.requests}, {str(i).encode() for i in range(7)}
+        )
+
     def test_signed_download_is_short_lived_and_keeps_unicode_filename(self):
         with self.transport(
             lambda request: httpx.Response(

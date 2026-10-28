@@ -205,6 +205,7 @@ def save_document(
                     sorted(path.name for path in directory.iterdir()),
                 )
             remote = SupabaseStorage(settings)
+            uploads = []
             for path in directory.iterdir():
                 if path.name == "document.pdf":
                     mime = "application/pdf"
@@ -216,7 +217,8 @@ def save_document(
                     kind, index = path.name.split("_")
                     page = manifest.pages[int(index)]
                     mime = (page.original if kind == "original" else page.rendered).mime
-                remote.upload(path, f"{identifier}/{storage_id}/{path.name}", mime)
+                uploads.append((path, f"{identifier}/{storage_id}/{path.name}", mime))
+            remote.upload_many(uploads)
         with connect(settings) as db:
             write_lock(db, "documents:" + user_id)
             if create_key:

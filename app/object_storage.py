@@ -1,5 +1,7 @@
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -22,12 +24,17 @@ class SupabaseStorage:
         if self.settings.supabase_key.startswith("eyJ"):
             headers["Authorization"] = "Bearer " + self.settings.supabase_key
         try:
-            with httpx.Client(
-                base_url=self.settings.supabase_url + "/storage/v1/",
-                headers=headers,
-                timeout=httpx.Timeout(45, connect=10),
-                follow_redirects=False,
-            ) as client:
+            shared_client = options.pop("_client", None)
+            with (
+                nullcontext(shared_client)
+                if shared_client
+                else httpx.Client(
+                    base_url=self.settings.supabase_url + "/storage/v1/",
+                    headers=headers,
+                    timeout=httpx.Timeout(45, connect=10),
+                    follow_redirects=False,
+                ) as client
+            ):
                 return client.request(method, path, **options)
         except httpx.HTTPError:
             raise HTTPException(503, "Không kết nối được kho tài liệu. Vui lòng thử lại.") from None
@@ -73,12 +80,13 @@ class SupabaseStorage:
         if response.json().get("public") is not False:
             raise ValueError("Document storage bucket must be private")
 
-    def upload(self, path: Path, key: str, mime: str) -> None:
+    def upload(self, path: Path, key: str, mime: str, *, client=None) -> None:
         with path.open("rb") as source:
             response = self._request(
                 "POST",
                 "object/" + quote(self.settings.storage_bucket + "/" + key, safe="/"),
                 content=iter(lambda: source.read(65536), b""),
+                _client=client,
                 headers={
                     "Content-Type": mime,
                     "Content-Length": str(path.stat().st_size),
@@ -87,6 +95,28 @@ class SupabaseStorage:
                 },
             )
         self._check(response)
+
+    def upload_many(self, files: list[tuple[Path, str, str]]) -> None:
+        # HTTPX clients support sharing between threads. Reuse TLS connections and bound
+        # simultaneous file streams; wait for workers before staged files are removed.
+        headers = {"apikey": self.settings.supabase_key}
+        if self.settings.supabase_key.startswith("eyJ"):
+            headers["Authorization"] = "Bearer " + self.settings.supabase_key
+        with (
+            httpx.Client(
+                base_url=self.settings.supabase_url + "/storage/v1/",
+                headers=headers,
+                timeout=httpx.Timeout(45, connect=10),
+                follow_redirects=False,
+            ) as client,
+            ThreadPoolExecutor(max_workers=4) as pool,
+        ):
+
+            def send(file):
+                self.upload(*file, client=client)
+
+            for _ in pool.map(send, files):
+                pass
 
     def signed_url(self, key: str, download_name: str | None = None) -> str:
         object_path = quote(self.settings.storage_bucket + "/" + key, safe="/")

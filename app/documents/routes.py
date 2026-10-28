@@ -1,5 +1,6 @@
 import asyncio
 import re
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,7 +12,7 @@ from ..auth import current_user
 from ..database import connect
 from ..object_storage import SupabaseStorage
 from . import storage
-from .models import Manifest
+from .models import Manifest, RenameDocument
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
@@ -100,6 +101,28 @@ async def update_document(document_id: UUID, request: Request, user: dict = Depe
 def get_document(document_id: UUID, request: Request, user: dict = Depends(current_user)):
     settings = request.app.state.settings
     return storage.detail(settings, storage.document_row(settings, user["id"], document_id.hex))
+
+
+@router.patch("/{document_id}")
+def rename_document(
+    document_id: UUID, body: RenameDocument, request: Request, user: dict = Depends(current_user)
+):
+    settings = request.app.state.settings
+    storage.document_row(settings, user["id"], document_id.hex)
+    with connect(settings) as db:
+        changed = db.execute(
+            "UPDATE documents SET name = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND user_id = ? AND revision = ?",
+            (
+                body.name,
+                datetime.now(timezone.utc).isoformat(),
+                document_id.hex,
+                user["id"],
+                body.revision,
+            ),
+        ).rowcount
+        if changed != 1:
+            raise HTTPException(409, "Tài liệu đã thay đổi. Hãy mở lại trước khi đổi tên.")
+    return storage.summary(storage.document_row(settings, user["id"], document_id.hex))
 
 
 @router.get("/{document_id}/assets/{storage_id}/{filename}")

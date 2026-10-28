@@ -1,5 +1,7 @@
 # Docscan backend
 
+Đổi tên dùng `PATCH /api/v1/documents/{id}` với JSON `{name, revision}`: kiểm tra chủ sở hữu và phiên bản, tăng revision, cập nhật tên/thời gian trong CSDL, giữ nguyên tệp. Không cần gửi lại multipart. CORS cho phép PATCH từ các origin đã cấu hình. Tên được kiểm tra cùng quy tắc với tạo tài liệu. Upload cloud dùng tối đa 4 luồng tệp và một HTTPX client chung cho mỗi batch; chỉ công bố revision khi tất cả tệp đã lưu, giữ cơ chế dọn dữ liệu dở dang và bảo vệ bản cũ.
+
 FastAPI API cho web scan tài liệu và app mobile trong tương lai. Bản hiện tại đăng ký email/mật khẩu dùng ngay; xác minh email và quên mật khẩu chưa triển khai.
 
 ## Render Free và Supabase Free

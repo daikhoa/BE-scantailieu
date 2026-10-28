@@ -8,6 +8,21 @@ class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
 
 
+class NamedDocument(Contract):
+    name: str = Field(min_length=1, max_length=160)
+
+    @model_validator(mode="after")
+    def check_name(self):
+        self.name = self.name.strip()
+        if not self.name or any(ord(character) < 32 for character in self.name):
+            raise ValueError("Invalid document name")
+        return self
+
+
+class RenameDocument(NamedDocument):
+    revision: int = Field(ge=1)
+
+
 class ImageInfo(Contract):
     width: int = Field(gt=0, le=20000)
     height: int = Field(gt=0, le=20000)
@@ -106,17 +121,13 @@ class SavedPage(Contract):
         return self
 
 
-class Manifest(Contract):
+class Manifest(NamedDocument):
     schemaVersion: Literal[1]
-    name: str = Field(min_length=1, max_length=160)
     revision: int | None = Field(default=None, ge=1)
     pages: list[SavedPage] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")
     def check_pages(self):
-        self.name = self.name.strip()
-        if not self.name or any(ord(character) < 32 for character in self.name):
-            raise ValueError("Invalid document name")
         if len({page.id for page in self.pages}) != len(self.pages):
             raise ValueError("Duplicate page IDs")
         return self

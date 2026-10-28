@@ -102,3 +102,37 @@ class CloudDocumentTests(ApiTestCase):
         self.assertEqual(updated.json()["revision"], 2)
         self.assertEqual(len(self.objects), 5)
         self.assertTrue(set(self.objects).isdisjoint(original_objects))
+
+    def test_rename_changes_only_metadata_and_rejects_stale_and_other_owners(self):
+        saved = self.save().json()
+        objects = dict(self.objects)
+        path = "/api/v1/documents/" + saved["id"]
+        response = self.client.patch(
+            path, json={"name": "  Bài học mới  ", "revision": 1}, headers=self.headers
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["name"], "Bài học mới")
+        self.assertEqual(response.json()["revision"], 2)
+        self.assertEqual(self.objects, objects)
+        self.assertEqual(self.client.get(path).json()["name"], "Bài học mới")
+        self.assertEqual(
+            self.client.patch(
+                path, json={"name": "Stale", "revision": 1}, headers=self.headers
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.patch(
+                path, json={"name": "   ", "revision": 2}, headers=self.headers
+            ).status_code,
+            422,
+        )
+        self.client.delete("/api/v1/auth/session", headers=self.headers)
+        self.register("rename-outsider@example.com")
+        self.login("rename-outsider@example.com")
+        self.assertEqual(
+            self.client.patch(
+                path, json={"name": "Other", "revision": 2}, headers=self.headers
+            ).status_code,
+            404,
+        )
