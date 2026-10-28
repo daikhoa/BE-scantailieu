@@ -20,7 +20,15 @@ from ..object_storage import SupabaseStorage
 from .models import ImageInfo, Manifest
 
 logger = logging.getLogger(__name__)
-FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "AVIF": "image/avif"}
+FORMATS = {
+    "JPEG": "image/jpeg",
+    # Phone JPEGs may contain MPF auxiliary images (e.g. depth/gain maps).
+    # Pillow identifies these as MPO; the browser edits their primary JPEG image.
+    "MPO": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+    "AVIF": "image/avif",
+}
 
 
 def document_row(settings: Settings, user_id: str, identifier: str):
@@ -57,7 +65,7 @@ def write_uploaded_file(upload: UploadFile, target: Path, maximum: int) -> int:
     return size
 
 
-def validate_image(path: Path, info: ImageInfo) -> None:
+def validate_image(path: Path, info: ImageInfo, label: str = "Ảnh") -> None:
     if info.mime in ("image/heic", "image/heif"):
         # Originals are private opaque sources: the SDK validates/decompresses HEIF on reopening.
         # Never pass unsupported HEIF bytes to a server decoder or use them as a thumbnail.
@@ -69,19 +77,26 @@ def validate_image(path: Path, info: ImageInfo) -> None:
             raise HTTPException(422, "Ảnh HEIF không hợp lệ.")
         return
     try:
-        with Image.open(path) as image:
+        with Image.open(path, formats=["JPEG", "PNG", "WEBP", "AVIF"]) as image:
             expected = (info.width, info.height)
             matches = image.size == expected
             orientation = image.getexif().get(274, 1) if not matches else 1
             if orientation in (5, 6, 7, 8):
                 matches = matches or image.size == expected[::-1]
-            if FORMATS.get(image.format) != info.mime or not matches:
-                raise ValueError("Image metadata mismatch")
+            if FORMATS.get(image.format) != info.mime:
+                raise HTTPException(422, f"{label}: định dạng tệp không khớp nội dung ảnh.")
+            if not matches:
+                raise HTTPException(
+                    422,
+                    f"{label}: kích thước ảnh không khớp. Hãy mở chỉnh sửa trang này rồi lưu lại.",
+                )
         # Reading EXIF may advance/close the PNG parser; verify a fresh handle as Pillow requires.
-        with Image.open(path) as image:
+        with Image.open(path, formats=["JPEG", "PNG", "WEBP", "AVIF"]) as image:
             image.verify()
     except (UnidentifiedImageError, ValueError, SyntaxError, Image.DecompressionBombError, OSError):
-        raise HTTPException(422, "Nội dung hoặc kích thước ảnh không hợp lệ.") from None
+        raise HTTPException(
+            422, f"{label}: không đọc được nội dung ảnh. Hãy chọn hoặc chụp lại trang này."
+        ) from None
 
 
 def validate_pdf(path: Path, page_count: int) -> None:
@@ -159,8 +174,12 @@ def save_document(
             if byte_size > settings.max_request_bytes:
                 raise HTTPException(413, "Tài liệu vượt giới hạn dung lượng.")
         for index, page in enumerate(manifest.pages):
-            validate_image(directory / f"original_{index}", page.original)
-            validate_image(directory / f"rendered_{index}", page.rendered)
+            validate_image(
+                directory / f"original_{index}", page.original, f"Ảnh gốc trang {index + 1}"
+            )
+            validate_image(
+                directory / f"rendered_{index}", page.rendered, f"Ảnh đã chỉnh trang {index + 1}"
+            )
             with Image.open(directory / f"rendered_{index}") as image:
                 image.thumbnail((320, 320))
                 image.convert("RGB").save(directory / f"thumbnail_{index}", "JPEG", quality=80)

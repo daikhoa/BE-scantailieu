@@ -36,7 +36,8 @@ Tài liệu API: `http://127.0.0.1:8000/docs`; hợp đồng JSON: `/openapi.jso
 - Cùng Wi-Fi: mở URL Network mà Vite in ra, ví dụ `http://<IP-máy-tính>:5173`. Nhập ảnh, tài khoản và PDF dùng cùng origin qua proxy.
 - Camera web và Web Share yêu cầu secure context. Để thử camera trên điện thoại, dùng HTTPS với chứng chỉ được thiết bị tin cậy hoặc tunnel HTTPS đã cấu hình tới FE. Không bỏ qua cảnh báo chứng chỉ. Thiết lập tunnel/hosting bên ngoài chưa nằm trong lần triển khai này.
 - Với HTTPS, đặt `$env:DOCSCAN_SECURE_COOKIE='true'` và `$env:DOCSCAN_ALLOWED_ORIGINS='https://ten-mien-thu-nghiem'` trước khi khởi động backend. Vite cũng cần cho phép đúng hostname được sử dụng; không mở `allowedHosts: true` cho mọi host.
-- PDF được tạo trước khi hiện nút tải, xem từng trang bằng ảnh đầu ra nên không phụ thuộc iframe PDF. Có Mở PDF và Chia sẻ nếu nền tảng hỗ trợ. Sau khi lưu có đường tải máy chủ với `Content-Disposition: attachment`.
+- PDF mới dùng khung A4 dọc cố định, ảnh nằm vừa trang và giữ tỷ lệ; bản xem trước và trình đọc toàn bộ trang dùng cùng cách bố trí. Mở PDF hoạt động trong web, không phụ thuộc plugin PDF của webview. Tải PDF khi chưa lưu sẽ chuẩn bị bản lưu trước rồi yêu cầu thao tác trực tiếp lần nữa để tránh mất user activation trên iPhone. Sau khi lưu có đường tải HTTPS với `Content-Disposition: attachment`. Chia sẻ/Lưu vào Tệp dùng file đã chuẩn bị nếu nền tảng hỗ trợ.
+- Ảnh JPEG có MPF (được Pillow nhận diện là MPO) được lưu nguyên bản như JPEG; chỉ dùng ảnh chính, không lấy ảnh phụ làm trang mới. Lỗi kiểm tra ảnh chỉ rõ số trang và ảnh gốc/đã chỉnh; lỗi không thay đổi phiên bản đã lưu trước đó.
 - Một số webview áp dụng chính sách tải/chia sẻ riêng. Nếu bị chặn, mở liên kết trong trình duyệt đầy đủ hoặc dùng Mở PDF/Chia sẻ. Không thể bảo đảm mọi webview và mọi phiên bản điện thoại bằng một API trình duyệt duy nhất.
 
 ## API dùng cho app

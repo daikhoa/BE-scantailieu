@@ -43,6 +43,51 @@ def upload_payload(name="Bài học", revision=None, pages=2):
 
 
 class DocumentTests(ApiTestCase):
+    def test_accepts_phone_jpeg_with_multiple_picture_metadata(self):
+        fields, files = upload_payload(pages=1)
+        source = io.BytesIO()
+        image = Image.new("RGB", (12, 16), "white")
+        image.save(source, format="MPO", save_all=True, append_images=[image.copy()])
+        files["original_0"] = ("phone.jpg", source.getvalue(), "image/jpeg")
+        response = self.client.post(
+            "/api/v1/documents", data=fields, files=files, headers=self.headers
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+
+    def test_accepts_encoded_or_oriented_dimensions_of_phone_jpegs(self):
+        for orientation in range(1, 9):
+            with self.subTest(orientation=orientation):
+                fields, files = upload_payload(pages=1)
+                source = io.BytesIO()
+                image = Image.new("RGB", (16, 12), "white")
+                exif = Image.Exif()
+                exif[274] = orientation
+                image.save(source, format="JPEG", exif=exif)
+                manifest = json.loads(fields["manifest"])
+                manifest["pages"][0]["original"].update(
+                    width=12 if orientation >= 5 else 16,
+                    height=16 if orientation >= 5 else 12,
+                )
+                fields["manifest"] = json.dumps(manifest)
+                files["original_0"] = ("phone.jpg", source.getvalue(), "image/jpeg")
+                response = self.client.post(
+                    "/api/v1/documents", data=fields, files=files, headers=self.headers
+                )
+                self.assertEqual(response.status_code, 201, response.text)
+
+    def test_identifies_the_invalid_page_and_preserves_its_previous_revision(self):
+        document = self.save().json()
+        fields, files = upload_payload(revision=1)
+        files["original_1"] = ("broken.jpg", b"not an image", "image/jpeg")
+        response = self.client.put(
+            f"/api/v1/documents/{document['id']}", data=fields, files=files, headers=self.headers
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Ảnh gốc trang 2", response.json()["detail"])
+        self.assertEqual(
+            self.client.get(f"/api/v1/documents/{document['id']}").json()["revision"], 1
+        )
+
     def test_accepts_png_original_and_jpeg_rendered_page(self):
         fields, files = upload_payload(pages=1)
         source = io.BytesIO()
