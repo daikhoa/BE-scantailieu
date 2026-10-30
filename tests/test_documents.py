@@ -43,6 +43,67 @@ def upload_payload(name="Bài học", revision=None, pages=2):
 
 
 class DocumentTests(ApiTestCase):
+    def test_partial_pages_preserve_unloaded_pages_and_apply_reorder_delete(self):
+        document = self.save(pages=3).json()
+        fields, files = upload_payload(revision=1, pages=1)
+        changed = json.loads(fields["manifest"])["pages"][0]
+        changed["recipe"]["rotation"] = 90
+        edited_pdf = io.BytesIO()
+        edited_writer = PdfWriter()
+        edited_writer.add_blank_page(width=33, height=44)
+        edited_writer.write(edited_pdf)
+        files["pdf"] = ("edited.pdf", edited_pdf.getvalue(), "application/pdf")
+        update = {
+            "name": "Updated",
+            "revision": 1,
+            "pages": [{"id": "page-2", "reuse": True}, changed],
+        }
+        files = {
+            "pdf": files["pdf"],
+            "original_1": files["original_0"],
+            "rendered_1": files["rendered_0"],
+        }
+        response = self.client.put(
+            f"/api/v1/documents/{document['id']}/pages",
+            data={"manifest": json.dumps(update)},
+            files=files,
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        detail = self.client.get(f"/api/v1/documents/{document['id']}").json()
+        self.assertEqual(detail["revision"], 2)
+        self.assertEqual([page["id"] for page in detail["pages"]], ["page-2", "page-0"])
+        self.assertEqual(detail["pages"][1]["recipe"]["rotation"], 90)
+        from pypdf import PdfReader
+
+        self.assertEqual(
+            len(PdfReader(io.BytesIO(self.client.get(detail["pdfUrl"]).content)).pages), 2
+        )
+        merged = PdfReader(io.BytesIO(self.client.get(detail["pdfUrl"]).content))
+        self.assertEqual([float(page.mediabox.width) for page in merged.pages], [12, 33])
+        self.assertEqual(
+            self.client.put(
+                f"/api/v1/documents/{document['id']}/pages",
+                data={"manifest": json.dumps(update)},
+                files=files,
+                headers=self.headers,
+            ).status_code,
+            409,
+        )
+
+    def test_reuse_rejects_foreign_page_and_keeps_previous_version(self):
+        document = self.save().json()
+        update = {"name": "Same", "revision": 1, "pages": [{"id": "unknown", "reuse": True}]}
+        response = self.client.put(
+            f"/api/v1/documents/{document['id']}/pages",
+            files={"manifest": (None, json.dumps(update))},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(
+            self.client.get(f"/api/v1/documents/{document['id']}").json()["revision"], 1
+        )
+
     def test_accepts_phone_jpeg_with_multiple_picture_metadata(self):
         fields, files = upload_payload(pages=1)
         source = io.BytesIO()

@@ -12,7 +12,8 @@ from ..auth import current_user
 from ..database import connect
 from ..object_storage import SupabaseStorage
 from . import storage
-from .models import Manifest, RenameDocument
+from .models import Manifest, PageUpdate, RenameDocument
+from .page_update import save_page_update
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
@@ -40,7 +41,9 @@ def list_documents(
     }
 
 
-async def save_request(request: Request, user: dict, identifier: str | None = None):
+async def save_request(
+    request: Request, user: dict, identifier: str | None = None, partial: bool = False
+):
     if identifier:
         await run_in_threadpool(
             storage.document_row, request.app.state.settings, user["id"], identifier
@@ -57,12 +60,14 @@ async def save_request(request: Request, user: dict, identifier: str | None = No
             headers={"Retry-After": "3"},
         ) from None
     try:
-        return await parse_and_save(request, user, identifier)
+        return await parse_and_save(request, user, identifier, partial)
     finally:
         slots.release()
 
 
-async def parse_and_save(request: Request, user: dict, identifier: str | None):
+async def parse_and_save(
+    request: Request, user: dict, identifier: str | None, partial: bool = False
+):
     create_key = request.headers.get("idempotency-key") if identifier is None else None
     if create_key and not re.fullmatch(r"[a-zA-Z0-9_-]{16,80}", create_key):
         raise HTTPException(422, "Mã yêu cầu lưu không hợp lệ.")
@@ -71,11 +76,15 @@ async def parse_and_save(request: Request, user: dict, identifier: str | None):
         if not isinstance(raw, str):
             raise HTTPException(422, "Thiếu thông tin tài liệu.")
         try:
-            manifest = Manifest.model_validate_json(raw)
+            manifest = (PageUpdate if partial else Manifest).model_validate_json(raw)
         except ValidationError:
             raise HTTPException(
                 422, "Thông tin trang hoặc công thức chỉnh sửa không hợp lệ."
             ) from None
+        if partial:
+            return await run_in_threadpool(
+                save_page_update, request.app.state.settings, user["id"], identifier, manifest, form
+            )
         return await run_in_threadpool(
             storage.save_document,
             request.app.state.settings,
@@ -101,6 +110,11 @@ async def update_document(document_id: UUID, request: Request, user: dict = Depe
 def get_document(document_id: UUID, request: Request, user: dict = Depends(current_user)):
     settings = request.app.state.settings
     return storage.detail(settings, storage.document_row(settings, user["id"], document_id.hex))
+
+
+@router.put("/{document_id}/pages")
+async def update_pages(document_id: UUID, request: Request, user: dict = Depends(current_user)):
+    return await save_request(request, user, document_id.hex, partial=True)
 
 
 @router.patch("/{document_id}")

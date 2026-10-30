@@ -1,7 +1,7 @@
 FROM node:22-bookworm-slim AS frontend
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-ARG DOCSCAN_FRONTEND_REF=6395ec99565b933191aa5faca53e4a8e7c01e05d
+ARG DOCSCAN_FRONTEND_REF=27b905e512f3867ba816baa2f3564f4d7897fb6c
 WORKDIR /build/frontend
 RUN test "${#DOCSCAN_FRONTEND_REF}" = 40 \
     && git init \

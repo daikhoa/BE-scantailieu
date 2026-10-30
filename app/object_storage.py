@@ -145,3 +145,32 @@ class SupabaseStorage:
                     "DELETE", "object/" + self.settings.storage_bucket, json={"prefixes": keys}
                 )
             )
+
+    def download(self, key: str, target: Path, maximum: int, *, client=None) -> None:
+        # Authenticated object reads stay on the configured private bucket, never a client URL.
+        headers = {"apikey": self.settings.supabase_key}
+        if self.settings.supabase_key.startswith("eyJ"):
+            headers["Authorization"] = "Bearer " + self.settings.supabase_key
+        try:
+            with (
+                nullcontext(client)
+                if client
+                else httpx.Client(timeout=httpx.Timeout(45, connect=10), follow_redirects=False)
+            ) as client:
+                with client.stream(
+                    "GET",
+                    self.settings.supabase_url
+                    + "/storage/v1/object/authenticated/"
+                    + quote(self.settings.storage_bucket + "/" + key, safe="/"),
+                    headers=headers,
+                ) as response:
+                    self._check(response)
+                    size = 0
+                    with target.open("xb") as destination:
+                        for chunk in response.iter_bytes(65536):
+                            size += len(chunk)
+                            if size > maximum:
+                                raise HTTPException(413, "Tệp vượt giới hạn dung lượng.")
+                            destination.write(chunk)
+        except httpx.HTTPError:
+            raise HTTPException(503, "Không kết nối được kho tài liệu. Vui lòng thử lại.") from None

@@ -131,3 +131,19 @@ class Manifest(NamedDocument):
         if len({page.id for page in self.pages}) != len(self.pages):
             raise ValueError("Duplicate page IDs")
         return self
+
+
+class ReusedPage(Contract):
+    id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
+    reuse: Literal[True]
+
+
+class PageUpdate(NamedDocument):
+    revision: int = Field(ge=1)
+    pages: list[ReusedPage | SavedPage] = Field(min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def unique_ids(self):
+        if len({page.id for page in self.pages}) != len(self.pages):
+            raise ValueError("Duplicate page IDs")
+        return self

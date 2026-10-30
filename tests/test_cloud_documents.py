@@ -40,6 +40,11 @@ class CloudDocumentTests(ApiTestCase):
 
     def storage_request(self, request):
         path = request.url.path.removeprefix("/storage/v1/")
+        if request.method == "GET" and path.startswith("object/authenticated/"):
+            content = self.objects.get(path.removeprefix("object/authenticated/"))
+            return (
+                httpx.Response(200, content=content) if content is not None else httpx.Response(404)
+            )
         if path == "bucket/docscan-private":
             return httpx.Response(200, json={"public": False})
         if request.method == "DELETE":
@@ -86,6 +91,27 @@ class CloudDocumentTests(ApiTestCase):
         self.register("outsider@example.com")
         self.login("outsider@example.com")
         self.assertEqual(self.client.get(detail["pdfUrl"], follow_redirects=False).status_code, 404)
+
+    def test_partial_reuse_survives_cloud_restart_and_upload_failure(self):
+        document = self.save().json()
+        before = dict(self.objects)
+        update = {"name": "Cloud reuse", "revision": 1, "pages": [{"id": "page-0", "reuse": True}]}
+        self.upload_error = True
+        response = self.client.put(
+            f"/api/v1/documents/{document['id']}/pages",
+            files={"manifest": (None, json.dumps(update))},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertTrue(all(self.objects.get(key) == value for key, value in before.items()))
+        self.upload_error = False
+        response = self.client.put(
+            f"/api/v1/documents/{document['id']}/pages",
+            files={"manifest": (None, json.dumps(update))},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["revision"], 2)
 
     def test_failed_upload_preserves_live_revision_and_success_retires_old_objects(self):
         created = self.save().json()
