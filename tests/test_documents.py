@@ -43,6 +43,32 @@ def upload_payload(name="Bài học", revision=None, pages=2):
 
 
 class DocumentTests(ApiTestCase):
+    def test_reuses_json_stored_four_corner_crop(self):
+        fields, files = upload_payload(pages=1)
+        manifest = json.loads(fields["manifest"])
+        manifest["pages"][0]["recipe"]["crop"] = {
+            "kind": "document",
+            "corners": [{"x": 0, "y": 0}, {"x": 12, "y": 0}, {"x": 12, "y": 16}, {"x": 0, "y": 16}],
+        }
+        created = self.client.post(
+            "/api/v1/documents",
+            data={"manifest": json.dumps(manifest)},
+            files=files,
+            headers=self.headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        update = {
+            "name": "Cropped reuse",
+            "revision": 1,
+            "pages": [{"id": "page-0", "reuse": True}],
+        }
+        response = self.client.put(
+            f"/api/v1/documents/{created.json()['id']}/pages",
+            files={"manifest": (None, json.dumps(update))},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
     def test_partial_pages_preserve_unloaded_pages_and_apply_reorder_delete(self):
         document = self.save(pages=3).json()
         fields, files = upload_payload(revision=1, pages=1)

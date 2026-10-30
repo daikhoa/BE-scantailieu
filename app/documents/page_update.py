@@ -1,5 +1,7 @@
 """Assemble edited pages with private stored pages without a client download round trip."""
 
+import json
+import shutil
 from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -58,7 +60,8 @@ def save_page_update(settings, user_id: str, identifier: str, update: PageUpdate
                 source = settings.data_dir / "documents" / identifier / old["storage_id"] / filename
                 if not source.is_file() or source.stat().st_size > maximum:
                     raise HTTPException(503, "Không đọc được phiên bản tài liệu đã lưu.")
-                return source
+                # Do not keep old-version file handles open during atomic retirement on Windows.
+                shutil.copyfile(source, target)
             return target
 
         old_pdf = read_old("document.pdf", settings.max_pdf_bytes)
@@ -82,12 +85,16 @@ def save_page_update(settings, user_id: str, identifier: str, update: PageUpdate
                 old_index = indices[page.id]
                 saved = original["pages"][old_index]
                 resolved.append(
-                    SavedPage.model_validate(
-                        {
-                            key: value
-                            for key, value in saved.items()
-                            if key not in ("originalUrl", "renderedUrl", "thumbnailUrl")
-                        }
+                    # Stored recipes are JSON: four-corner tuples serialize as arrays.
+                    # Validate with the same JSON semantics as the upload boundary.
+                    SavedPage.model_validate_json(
+                        json.dumps(
+                            {
+                                key: value
+                                for key, value in saved.items()
+                                if key not in ("originalUrl", "renderedUrl", "thumbnailUrl")
+                            }
+                        )
                     )
                 )
                 writer.add_page(reader.pages[old_index])
